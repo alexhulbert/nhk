@@ -1,0 +1,118 @@
+#!/usr/bin/env node
+
+const Proc = require('child_process');
+const File = require('fs');
+
+const HELPFILE = `
+Usage: nhk [OPTION]
+Compile nested YAML to SXHKD configuration file
+
+  -i, --input INPUT     Read nested YAML configuration from INPUT
+  -o, --output OUTPUT   Output SXHKD configuration to OUTPUT
+  -h, --help            Print this help file
+
+With no OUTPUT, write to stdout
+
+Examples:
+  nhk -i keybinds.yml
+  nhk -i keybinds.yml -o ~/.config/sxhkd/sxhkdrc
+`
+
+const io = {
+  in: null,
+  out: null
+};
+
+process.argv.slice(2).forEach((arg, index, args) => {
+  if (['-h', '--help'].includes(arg)) {
+    console.error(HELPFILE);
+    process.exit(0);
+  }
+  if (index + 1 >= args.length) return;
+  if (['-i', '--input'] .includes(arg))
+    io.in  = args[index + 1];
+  if (['-o', '--output'].includes(arg))
+    io.out = args[index + 1];
+});
+
+if (!io.in) {
+  console.error('Please specify a file to read from.');
+  console.error(HELPFILE);
+  process.exit(1);
+}
+
+let source;
+try {
+  source = JSON.parse(
+    Proc.execSync('yaml2json', {
+      input: File.readFileSync(io.in)
+    }).toString('utf8')
+  );
+} catch(e) {
+  console.error('Invalid input file');
+  process.exit(1);
+}
+
+let stickyDict =  { };
+let commandDict = { };
+
+const processSubtree = (key, value, mode, sticky) => {
+  stickyDict[mode] = sticky;
+  if (!commandDict.hasOwnProperty(key))
+    commandDict[key] = { };
+  if (typeof value === 'string') {
+    commandDict[key][mode] = value;
+  } else {
+    if (!value.hasOwnProperty('MODENAME')) {
+      console.error('MODENAME not specified.');
+      process.exit(1);
+    }
+
+    let subTree = JSON.parse(JSON.stringify(value));
+    let newMode   = subTree.MODENAME;
+    let newSticky = !!subTree.STICKY;
+    delete subTree.MODENAME;
+    delete subTree.STICKY;
+
+    commandDict[key][mode] = 'mode ' + newMode;
+    for (let subKey of Object.keys(subTree))
+      processSubtree(subKey, subTree[subKey], newMode, newSticky);
+  }
+};
+
+for (let key of Object.keys(source)) {
+  processSubtree(key, source[key], 'NULL', true);
+}
+
+let sxhkdrc = [];
+for (let key of Object.keys(commandDict)) {
+  sxhkdrc.push(key);
+
+  const modes = Object.keys(commandDict[key]);
+  if (modes.length === 1 && modes[0] === 'NULL') {
+    sxhkdrc.push('  ' + commandDict[key]['NULL']);
+  } else {
+    sxhkdrc.push('  ' + 'case mode -q in');
+    for (let mode of modes) {
+      const command = commandDict[key][mode];
+      sxhkdrc.push('  ' + mode + ')');
+      sxhkdrc.push('    ' + command);
+      if (!command.startsWith('mode') && !stickyDict[mode])
+        sxhkdrc.push('    ' + 'mode -e');
+      sxhkdrc.push('    ' + ';;');
+    }
+    sxhkdrc.push('  ' + 'esac');
+  }
+}
+
+if (io.out) {
+  try {
+    File.writeFileSync(io.out, sxhkdrc.join('\n'))
+  } catch(e) {
+    console.error('Error writing to specified output file');
+    process.exit(1);
+  }
+} else {
+  console.log(sxhkdrc.join('\n'));
+}
+process.exit(0);
