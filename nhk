@@ -53,10 +53,45 @@ try {
   process.exit(1);
 }
 
-let stickyDict =  { };
+let stickyDict  = { };
 let commandDict = { };
+let aliasDict   = {
+  '$': Array(9)
+    .fill()
+    .map((_, i) => [i + 1, i + 1])
+    .reduce((obj, [k, v]) => ({ ...obj, [k]: v }), {})
+};
+
+const toRegExp = (str) => {
+  return new RegExp(str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&'), 'g');
+}
+
+const processKey = (key, value, mode, sticky) => {
+  let newKey = key;
+  
+  return newKey;
+}
 
 const processSubtree = (key, value, mode, sticky) => {
+  let aliases = Object.keys(aliasDict)
+    .filter(x => x != '$')
+    .concat('$');
+  for (let alias of aliases) {
+    if (typeof aliasDict[alias] === 'object' && key.includes(alias)) {
+      for (let k of Object.keys(aliasDict[alias])) {
+        processSubtree(
+          key.replace(toRegExp(alias), k),
+          value.replace(toRegExp(alias), aliasDict[alias][k]),
+          mode, sticky
+        )
+      }
+      return;
+    }
+    key = key.replace(
+      toRegExp(alias),
+      aliasDict[alias]
+    );
+  }
   stickyDict[mode] = sticky;
   if (!commandDict.hasOwnProperty(key))
     commandDict[key] = { };
@@ -81,7 +116,11 @@ const processSubtree = (key, value, mode, sticky) => {
 };
 
 for (let key of Object.keys(source)) {
-  processSubtree(key, source[key], 'NULL', true);
+  if (key == 'ALIAS') {
+    Object.assign(aliasDict, source[key]);
+  } else {
+    processSubtree(key, source[key], 'NULL', true);
+  }
 }
 
 let sxhkdrc = [];
@@ -92,14 +131,14 @@ for (let key of Object.keys(commandDict)) {
   if (modes.length === 1 && modes[0] === 'NULL') {
     sxhkdrc.push('  ' + commandDict[key]['NULL']);
   } else {
-    sxhkdrc.push('  ' + 'case mode -q in');
+    sxhkdrc.push('  ' + 'case mode -q in' + '\\');
     for (let mode of modes) {
       const command = commandDict[key][mode];
-      sxhkdrc.push('  ' + mode + ')');
-      sxhkdrc.push('    ' + command);
+      sxhkdrc.push('  ' + mode + ')' + '\\');
+      sxhkdrc.push('    ' + command + ';\\');
       if (!command.startsWith('mode') && !stickyDict[mode])
-        sxhkdrc.push('    ' + 'mode -e');
-      sxhkdrc.push('    ' + ';;');
+        sxhkdrc.push('    ' + 'mode -e' + ';\\');
+      sxhkdrc.push('    ' + ';;\\');
     }
     sxhkdrc.push('  ' + 'esac');
   }
